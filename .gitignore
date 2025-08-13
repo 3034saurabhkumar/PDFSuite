@@ -1,0 +1,10 @@
+# Virtual environment
+venv/
+.env
+
+# PyCharm or other IDE-specific files
+.idea/
+*.pyc
+
+# Database files (if you're not using a hosted database)
+*.db
