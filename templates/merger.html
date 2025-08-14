@@ -40,6 +40,20 @@
       .modal-overlay.open .modal-content {
         transform: translateY(0);
       }
+      .file-item-reorder {
+          cursor: grab;
+          transition: all 0.2s ease-in-out;
+      }
+      .file-item-reorder.dragging {
+          opacity: 0.5;
+          background-color: #e5e7eb;
+      }
+      .file-item-reorder.drop-target-before {
+          border-top: 2px solid #4f46e5;
+      }
+      .file-item-reorder.drop-target-after {
+          border-bottom: 2px solid #4f46e5;
+      }
     </style>
 </head>
 <body class="bg-gray-100 flex flex-col min-h-screen">
@@ -235,7 +249,7 @@
             messageModal.classList.remove('open');
         });
 
-        // Handle drag and drop events
+        // Handle drag and drop events for file uploads
         ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
             dropArea.addEventListener(eventName, preventDefaults, false);
         });
@@ -274,16 +288,76 @@
         }
 
         function handleFiles(files) {
-            files = [...files];
+            files = [...files].filter(file => file.type === 'application/pdf');
             filesToMerge = [...filesToMerge, ...files];
             updateFileList();
         }
+
+        // Add drag-and-drop reordering functionality
+        let draggedItemIndex = null;
+        let dropTargetIndex = null;
+
+        fileList.addEventListener('dragstart', (e) => {
+            const fileItem = e.target.closest('[data-index]');
+            if (fileItem) {
+                draggedItemIndex = parseInt(fileItem.dataset.index, 10);
+                e.dataTransfer.effectAllowed = 'move';
+                fileItem.classList.add('dragging');
+            }
+        });
+
+        fileList.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            const fileItem = e.target.closest('[data-index]');
+            if (fileItem) {
+                dropTargetIndex = parseInt(fileItem.dataset.index, 10);
+                const rect = fileItem.getBoundingClientRect();
+                const offsetY = e.clientY - rect.top;
+
+                document.querySelectorAll('.drop-target-before, .drop-target-after').forEach(el => {
+                    el.classList.remove('drop-target-before', 'drop-target-after');
+                });
+
+                if (offsetY < rect.height / 2) {
+                    fileItem.classList.add('drop-target-before');
+                } else {
+                    fileItem.classList.add('drop-target-after');
+                }
+            }
+        });
+
+        fileList.addEventListener('dragleave', () => {
+            document.querySelectorAll('.drop-target-before, .drop-target-after').forEach(el => {
+                el.classList.remove('drop-target-before', 'drop-target-after');
+            });
+        });
+
+        fileList.addEventListener('drop', (e) => {
+            e.preventDefault();
+            const fileItem = e.target.closest('[data-index]');
+
+            document.querySelectorAll('.file-item-reorder.dragging').forEach(el => el.classList.remove('dragging'));
+            document.querySelectorAll('.drop-target-before, .drop-target-after').forEach(el => el.classList.remove('drop-target-before', 'drop-target-after'));
+
+            if (fileItem && draggedItemIndex !== null && dropTargetIndex !== null) {
+                if (draggedItemIndex === dropTargetIndex) return;
+
+                const [draggedFile] = filesToMerge.splice(draggedItemIndex, 1);
+                const adjustedDropIndex = (draggedItemIndex < dropTargetIndex) ? dropTargetIndex - 1 : dropTargetIndex;
+                filesToMerge.splice(adjustedDropIndex, 0, draggedFile);
+                updateFileList();
+            }
+            draggedItemIndex = null;
+            dropTargetIndex = null;
+        });
 
         function updateFileList() {
             fileList.innerHTML = '';
             filesToMerge.forEach((file, index) => {
                 const fileItem = document.createElement('div');
-                fileItem.className = 'flex items-center justify-between p-4 bg-gray-50 rounded-md shadow-sm';
+                fileItem.className = 'file-item-reorder flex items-center justify-between p-4 bg-gray-50 rounded-md shadow-sm cursor-grab';
+                fileItem.setAttribute('draggable', 'true');
+                fileItem.setAttribute('data-index', index);
                 fileItem.innerHTML = `
                     <div class="flex items-center">
                         <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-red-500 mr-4" viewBox="0 0 20 20" fill="currentColor">
@@ -316,16 +390,54 @@
             }
         }
         
-        // The merging logic is not implemented in this example
-        mergeBtn.addEventListener('click', () => {
-            if (filesToMerge.length > 1) {
-                // Here you would add the logic to process the files,
-                // for example, using a library or sending them to a server.
-                // For now, we'll just show a success message.
-                console.log("Merging the following files:", filesToMerge.map(f => f.name));
-                showMessage("Merging started! (This is a placeholder action)");
-            } else {
+        // **The core fix: Sending files to the backend**
+        mergeBtn.addEventListener('click', async () => {
+            if (filesToMerge.length < 2) {
                 showMessage("Please add at least two PDF files to merge.");
+                return;
+            }
+
+            showMessage("Merging PDFs... Please wait. ⏳");
+            mergeBtn.disabled = true;
+
+            const formData = new FormData();
+            filesToMerge.forEach(file => {
+                formData.append('pdfs', file);
+            });
+
+            try {
+                const response = await fetch('/merge', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error || 'Failed to merge PDFs.');
+                }
+                
+                const blob = await response.blob();
+                
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'merged.pdf';
+                document.body.appendChild(a);
+                a.click();
+                
+                a.remove();
+                window.URL.revokeObjectURL(url);
+                
+                showMessage("PDFs merged successfully! Your download should start shortly. 😊");
+                
+                filesToMerge = [];
+                updateFileList();
+
+            } catch (error) {
+                console.error('Error:', error);
+                showMessage(`An error occurred: ${error.message}`);
+            } finally {
+                mergeBtn.disabled = false;
             }
         });
 
